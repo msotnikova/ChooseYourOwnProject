@@ -1,0 +1,213 @@
+---
+title: '"Choose Your Own" Project'
+author: "Maria Sotnikova"
+date: "2026-11-06"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Executive Summary
+
+For my "Choose Your Own" Project, I looked for data in the Kaggle repository as recommended by the assignment instructions. I found a data set called Adult Census Income that was uploaded to Kaggle by UCI Machine Learning and contains Census Bureau data from 1994. The variables included in the data set are: 
+
+* age
+* workclass
+* fnlwgt
+* education
+* education.num
+* marital.status
+* occupation
+* relationship
+* race
+* sex
+* capital.gain
+* capital.loss
+* hours.per.week
+* native.country
+* income
+
+The goal of my project is to use all these variables to predict corresponding income. To do this, I imported, cleaned, and visualized the Adult Census Income from Kaggle. Then, I created a training set and testing set with a 80/20 split. I selected this split because it provides a substantial amount of data for training while reserving a separate portion for evaluating predictive performance. I used that data to train and test the K-Nearest Neighbors (KNN) algorithm and the Random Forest algorithm to predict whether a person's income exceeds $50K/yr. The KNN algorithm makes predictions based on nearby observations, while the Random Forest algorithm combines predictions from multiple decision trees. These two methods go beyond linear regression and have the potential to make more accurate predictions.
+
+## Analysis
+
+First, let’s take a look at the code used to perform data cleaning, data exploration, and visualization: 
+
+```{r}
+# Install and load the necessary packages
+if (!require(tidyverse)) {
+  install.packages("tidyverse")
+  library(tidyverse)
+}
+
+if (!require(caret)) {
+  install.packages("caret")
+  library(caret)
+}
+
+if (!require(RKaggle)) {
+  install.packages("RKaggle")
+  library(RKaggle)
+}
+
+if (!require(randomForest)) {
+  install.packages("randomForest")
+  library(randomForest)
+}
+
+# Import directly into a tibble
+census_data <- RKaggle::get_dataset("uciml/adult-census-income")
+
+# Examine the data
+print(head(census_data))
+
+# Remove any row that contains a "?", convert categorical variables to factors, and save to a new tibble
+census_data_clean <- census_data %>%
+  mutate(across(where(is.character), str_trim)) %>%
+  mutate(across(where(is.character), ~ na_if(.x, "?"))) %>%
+  drop_na() %>%
+  mutate(across(where(is.character), as.factor))
+
+# Visualize the data
+income_plot <- ggplot(census_data_clean, aes(x = income)) +
+  geom_bar() +
+  labs(
+    title = "Distribution of Annual Income",
+    x = "Income Category",
+    y = "Number of Observations"
+  )
+
+print(income_plot)
+```
+
+Using this code, I noticed that there were missing values in the data, as well as categorical factors. So I cleaned the data by removing missing values and converting categorical variables to factors. Next I decided to split the data into a training set and a testing set in order to apply the K-Nearest Neighbors (KNN) algorithm. To optimize the performance of the K-Nearest Neighbors (KNN) algorithm, I performed hyperparameter tuning using three-fold cross-validation, with hyperparameter k set to three values: 5, 9, and 13. These parameters were chosen to reduce run time and produce the most accurate result. k = 13 produced the highest cross-validation accuracy.
+
+```{r}
+# Create training set and testing set
+set.seed(170)
+train_index <- createDataPartition(y = census_data_clean$income, times = 1, p = 0.8, list = FALSE)
+train_set <- census_data_clean[train_index, ]
+test_set <- census_data_clean[-train_index, ]
+
+# Separate predictors from the outcome
+train_x <- train_set %>% select(-income)
+test_x <- test_set %>% select(-income)
+
+# Create dummy-variable transformation using training predictors only
+dummy_model <- dummyVars(~ ., data = train_x, fullRank = FALSE)
+
+# Apply transformation to training and testing sets
+train_predictors <- predict(dummy_model, newdata = train_x)
+test_predictors <- predict(dummy_model, newdata = test_x)
+
+# Standardize training set
+preprocess_model <- preProcess(train_predictors, method = c("center", "scale"))
+train_predictors_scaled <- predict(preprocess_model, train_predictors)
+
+# Standardize testing set using the same parameters
+test_predictors_scaled <- predict(preprocess_model, test_predictors)
+
+# Store training set and testing set outcomes
+train_income <- as.factor(train_set$income)
+test_income <- factor(test_set$income, levels = levels(train_income))
+
+# Define cross-validation
+train_control <- trainControl(method = "cv", number = 3)
+
+# Train KNN model
+set.seed(170)
+knn_model <- train(
+  x = train_predictors_scaled,
+  y = train_income,
+  method = "knn",
+  trControl = train_control,
+  tuneGrid = data.frame(k = c( 5, 9, 13))
+)
+
+# Display results
+print(knn_model)
+
+# Display optimal k
+print(knn_model$bestTune)
+
+# Predict income using the testing dataset
+y_hat_knn <- predict(knn_model, newdata = test_predictors_scaled)
+
+# Generate confusion matrix
+cm <- confusionMatrix(data = y_hat_knn, reference = test_income)
+
+# Display confusion matrix
+print(cm)
+
+# Display classification accuracy
+print(cm$overall["Accuracy"])
+```
+
+The accuracy of the K-Nearest Neighbors (KNN) algorithm was found to be 0.823. Could the Random Forest algorithm perform better? I used the following code to find out. With the Random Forest algorithm, I also performed hyperparameter tuning using three-fold cross-validation, for accuracy and run time. I evaluated three values of mtry: 5, 10, and 20, and specified 100 trees. mtry = 10 produced the highest cross-validation accuracy.
+
+```{r}
+# Define parameters for Random Forest
+set.seed(170)
+control <- trainControl(method="cv", number = 3)
+grid <- data.frame(mtry = c(5, 10, 20))
+
+train_rf <-  train(train_predictors_scaled, train_income, 
+                   method = "rf", 
+                   ntree = 100,
+                   trControl = control,
+                   tuneGrid = grid)
+
+# Display Random Forest cross-validation results
+print(train_rf)
+
+# Display optimal mtry
+print(train_rf$bestTune)
+
+# Display detailed tuning results
+print(train_rf$results)
+
+# Predict income using the testing dataset
+y_hat_rf <- predict(train_rf, test_predictors_scaled)
+
+# Generate confusion matrix
+cm <- confusionMatrix(y_hat_rf, test_income)
+
+# Display confusion matrix
+print(cm)
+
+# Display classification accuracy
+print(cm$overall["Accuracy"])
+```
+
+## Results
+
+```{r}
+# Store results
+cm_knn <- confusionMatrix(y_hat_knn, test_income)
+cm_rf <- confusionMatrix(y_hat_rf, test_income)
+
+model_results <- tibble(
+  Model = c("KNN", "Random Forest"),
+  Accuracy = c(
+    unname(cm_knn$overall["Accuracy"]),
+    unname(cm_rf$overall["Accuracy"])
+  )
+)
+
+# Display results
+print(model_results)
+```
+
+The Random Forest algorithm performed better than the K-Nearest Neighbors (KNN) algorithm, achieving an accuracy of 0.856. Well done!
+
+## Conclusion
+
+In summary, I used Adult Census Income data from Kaggle to train and test the K-Nearest Neighbors (KNN) algorithm and the Random Forest algorithm to predict whether a person's income exceeds $50K/yr. The Random Forest algorithm performed better than the K-Nearest Neighbors (KNN) algorithm. This methodology could potentially impact marketing strategies to better understand their audiences. It is however limited by the fnlwgt variable, shorthand for a set of weights on the Current Population Survey (CPS) file that were developed by the data publisher. These weights could have biases. Future work could involve running these two algorithms again without fnlwgt as a predictor. Another limitation is that the distribution plot of annual income shows that the data set is imbalanced. Prediction accuracy alone may not adequately describe the effectiveness of the algorithms. Additional performance measures could be looked at in the future.
+
+## References 
+
+* Adult Census Income data from Kaggle: [https://www.kaggle.com/datasets/uciml/adult-census-income](https://www.kaggle.com/datasets/uciml/adult-census-income)
+* Introduction to Data Science: Data Analysis and Prediction Algorithms with R by Rafael A. Irizarry, Chapter 32 - Machine learning in practice: [https://rafalab.dfci.harvard.edu/dsbook/machine-learning-in-practice.html#machine-learning-in-practice](https://rafalab.dfci.harvard.edu/dsbook/machine-learning-in-practice.html#machine-learning-in-practice)
+* ChatGPT: [https://chatgpt.com/](https://chatgpt.com/)
